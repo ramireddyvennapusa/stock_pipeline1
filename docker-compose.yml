@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - airflow-network
+    # optional simple healthcheck
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  airflow:
+    image: apache/airflow:2.6.3
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      # Lighter executor for development to avoid worker timeouts
+      AIRFLOW__CORE__EXECUTOR: "SequentialExecutor"
+
+      # DB connection (keeps your original var names)
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+
+      # reduce webserver worker count and dag concurrency for low-spec machines
+      AIRFLOW__WEBSERVER__WORKERS: "1"
+      AIRFLOW__CORE__DAG_CONCURRENCY: "1"
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"
+
+      AIRFLOW__WEBSERVER__RBAC: "True"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__FERNET_KEY: "${AIRFLOW__FERNET_KEY}"
+
+      # Your custom envs
+      ALPHA_VANTAGE_API_KEY: "${ALPHA_VANTAGE_API_KEY}"
+      STOCK_SYMBOL: "${STOCK_SYMBOL}"
+
+      # Optional: keep these for reference if your code uses them
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+
+      # official image supports _PIP_ADDITIONAL_REQUIREMENTS to install extra packages on boot
+      _PIP_ADDITIONAL_REQUIREMENTS: "${_PIP_ADDITIONAL_REQUIREMENTS}"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./include:/opt/airflow/include
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./requirements.txt:/requirements.txt:ro
+    ports:
+      - "8081:8080"
+    # add a small wait so Postgres can be healthy before running migrations
+    command: >
+      bash -c "
+        echo 'Waiting for postgres to be ready...' &&
+        sleep 10 &&
+        airflow db upgrade &&
+        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true &&
+        exec airflow webserver --port 8080
+      "
+    networks:
+      - airflow-network
+
+volumes:
+  pgdata:
+
+networks:
+  airflow-network:
+    driver: bridge

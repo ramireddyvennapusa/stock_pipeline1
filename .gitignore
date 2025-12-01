@@ -1,0 +1,12 @@
+# Ignore Airflow logs
+logs/
+*.log
+
+# Python ignores
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+env/
+*.env
